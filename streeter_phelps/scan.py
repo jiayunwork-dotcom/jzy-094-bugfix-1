@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from . import model
 from .critical_point import CriticalPoint, _bisect_deficit_rate_root, critical_point
+from .model import coefficients_effectively_equal
 from .parameters import SagParams
 from .validation import InvalidParameterError, require_positive
 
@@ -91,7 +92,7 @@ def scan_along_river(
             distance=params.u * t_refined,
             deficit=d_refined,
             do=params.csat - d_refined,
-            special_case=params.k1 == params.k2,
+            special_case=coefficients_effectively_equal(params.k1, params.k2),
         )
 
     return ScanResult(

@@ -68,6 +68,35 @@ def test_critical_point_endpoint_special_case():
     assert body["critical_point"]["t_critical"] == pytest.approx(3.0, rel=1e-9)
 
 
+def test_critical_point_endpoint_last_ulp_k2_matches_exact_special_case():
+    # 扫参网格中间值 0.2 + 0.1 = 0.30000000000000004：必须与 k2=0.3 一致
+    # （修复前解析给 120 km/4.952，同一响应里数值复核却给 ~173.7 km）
+    params = {"k1": 0.3, "k2": 0.2 + 0.1, "u": 30.0, "l0": 15.0, "d0": 1.5, "csat": 10.0}
+    resp = client.post("/critical-point", json=params)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["special_case"] is True
+    point = body["critical_point"]
+    assert point["distance"] == pytest.approx(90.0, rel=1e-6)
+    assert point["deficit"] == pytest.approx(6.098545, rel=1e-6)
+    cross = body["numeric_cross_check"]
+    assert cross["distance"] == pytest.approx(90.0, abs=1e-3)
+    assert cross["deficit"] == pytest.approx(6.098545, rel=1e-6)
+
+
+def test_scan_endpoint_last_ulp_k2_has_no_negative_do():
+    # 沿程扫描 x_max=300、301 点：修复前最低 DO=-0.357 落在 10 km 处
+    params = {"k1": 0.3, "k2": 0.2 + 0.1, "u": 30.0, "l0": 15.0, "d0": 1.5, "csat": 10.0}
+    resp = client.post(
+        "/scan", json={"params": params, "x_max": 300.0, "n_points": 301}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert all(pt["do"] >= 0.0 for pt in body["points"])
+    assert body["grid_min"]["x"] == pytest.approx(90.0, abs=1.0)
+    assert body["grid_min"]["deficit"] == pytest.approx(6.098545, rel=1e-6)
+
+
 def test_sweep_endpoint_reports_trend():
     resp = client.post(
         "/sweep",
@@ -79,6 +108,24 @@ def test_sweep_endpoint_reports_trend():
     assert len(body["records"]) == 5
     deficits = [r["critical_deficit"] for r in body["records"]]
     assert all(b < a for a, b in zip(deficits, deficits[1:]))
+
+
+def test_sweep_endpoint_middle_grid_value_near_equal_is_not_a_notch():
+    # 现场演砸的扫参：[0.2, 0.4] 取 3 点，中间格 0.30000000000000004 不应凹口
+    base = {"k1": 0.3, "k2": 0.3, "u": 30.0, "l0": 15.0, "d0": 1.5, "csat": 10.0}
+    resp = client.post(
+        "/sweep",
+        json={"base": base, "parameter": "k2", "start": 0.2, "stop": 0.4, "n": 3},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["trend"] == "decreasing"
+    records = body["records"]
+    assert records[1]["value"] == 0.2 + 0.1
+    assert records[1]["critical_distance"] == pytest.approx(90.0, rel=1e-6)
+    assert records[1]["critical_deficit"] == pytest.approx(6.098545, rel=1e-6)
+    deficits = [r["critical_deficit"] for r in records]
+    assert deficits[0] > deficits[1] > deficits[2]
 
 
 @pytest.mark.parametrize(

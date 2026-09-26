@@ -2,9 +2,9 @@
 
 临界时刻满足 dD/dt = 0，解析式：
 
-    一般情形 k1 != k2：
+    一般情形 k1、k2 在数值上可分：
         t_c = ln[ (k2/k1) · (1 - D0·(k2-k1)/(k1·L0)) ] / (k2 - k1)
-    特解 k1 == k2 = k：
+    特解 k1 == k2 = k（含两者仅差末位、浮点上无法区分的情形）：
         t_c = 1/k - D0/(k·L0)
 
 存在性：临界点存在的充要条件是初始亏氧增速为正，即 k1·L0 > k2·D0
@@ -22,6 +22,7 @@ import math
 from dataclasses import dataclass
 
 from . import model
+from .model import coefficients_effectively_equal
 from .parameters import SagParams
 from .validation import InvalidParameterError
 
@@ -58,7 +59,7 @@ class CriticalPointResult:
 def critical_point(params: SagParams) -> CriticalPointResult:
     """解析求解临界点；不存在时 exists=False 且 point=None。"""
     k1, k2, l0, d0 = params.k1, params.k2, params.l0, params.d0
-    special = k1 == k2
+    special = coefficients_effectively_equal(k1, k2)
 
     # 存在性充要条件：初始时刻亏氧在增长（dD/dt|0 = k1·L0 - k2·D0 > 0）
     if k1 * l0 <= k2 * d0:
@@ -70,18 +71,24 @@ def critical_point(params: SagParams) -> CriticalPointResult:
         )
 
     if special:
-        # 特解分支：t_c = 1/k - D0/(k·L0)，此时必有 t_c > 0
+        # 特解分支：t_c = 1/k - D0/(k·L0)，此时必有 t_c > 0。
+        # k2 仅差末位时与严格 k1 == k2 用同一个 k1，结果逐位一致。
         t_c = 1.0 / k1 - d0 / (k1 * l0)
     else:
-        arg = (k2 / k1) * (1.0 - d0 * (k2 - k1) / (k1 * l0))
-        if arg <= 0.0:
+        # log(1 + z) 用 log1p 稳定求值：delta 很小时 z 也很小，
+        # 直接算 1 + z 再 log 会丢掉修正项、得到错误的 t_c。
+        # arg = (k2/k1)·(1 − D0·delta/(k1·L0)) = 1 + delta·q
+        delta = k2 - k1
+        q = 1.0 / k1 - k2 * d0 / (k1 * k1 * l0)
+        z = delta * q
+        if z <= -1.0:
             return CriticalPointResult(
                 exists=False,
                 point=None,
                 reason=REASON_NONPOSITIVE_LOG_ARGUMENT,
                 special_case=False,
             )
-        t_c = math.log(arg) / (k2 - k1)
+        t_c = math.log1p(z) / delta
         if t_c <= 0.0:  # 双保险：正常不会走到，绝不返回负河程
             return CriticalPointResult(
                 exists=False,
@@ -119,10 +126,13 @@ def critical_point_numeric(
         distance=params.u * t_c,
         deficit=d_c,
         do=params.csat - d_c,
-        special_case=params.k1 == params.k2,
+        special_case=coefficients_effectively_equal(params.k1, params.k2),
     )
     return CriticalPointResult(
-        exists=True, point=point, reason=REASON_OK, special_case=params.k1 == params.k2
+        exists=True,
+        point=point,
+        reason=REASON_OK,
+        special_case=coefficients_effectively_equal(params.k1, params.k2),
     )
 
 
