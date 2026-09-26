@@ -7,6 +7,10 @@
     特解 k1 == k2 = k：
         t_c = 1/k - D0/(k·L0)
 
+k1 与 k2 的相对差小于 model.NEARLY_EQUAL_REL_TOL 时，一般式对数真数里的
+1 - D0·(k2-k1)/(k1·L0) 会被舍入成 1.0，log 与 1/(k2-k1) 相互放大舍入噪声，
+t_c 完全失真；此时与亏氧求值一致，统一走特解（一般式的连续极限）。
+
 存在性：临界点存在的充要条件是初始亏氧增速为正，即 k1·L0 > k2·D0
 （等价地，一般式中对数真数为正且求得的 t_c > 0）。
 若 k1·L0 <= k2·D0，曲线从起点单调复氧，不存在氧垂 —— 此时必须明确报告
@@ -42,7 +46,7 @@ class CriticalPoint:
     distance: float  # 临界河程 x_c = U · t_c [km]
     deficit: float  # 临界亏氧 D_c [mg/L]
     do: float  # 临界溶解氧（全程最低 DO）[mg/L]
-    special_case: bool  # 是否走了 k1 == k2 特解分支
+    special_case: bool  # 是否走了 k1 ≈ k2 特解分支（含严格相等与数值上分不开）
 
 
 @dataclass(frozen=True)
@@ -52,13 +56,13 @@ class CriticalPointResult:
     exists: bool
     point: CriticalPoint | None
     reason: str  # REASON_* 之一
-    special_case: bool  # 是否命中 k1 == k2 特解（与是否存在临界点无关）
+    special_case: bool  # 是否命中 k1 ≈ k2 特解（与是否存在临界点无关）
 
 
 def critical_point(params: SagParams) -> CriticalPointResult:
     """解析求解临界点；不存在时 exists=False 且 point=None。"""
     k1, k2, l0, d0 = params.k1, params.k2, params.l0, params.d0
-    special = k1 == k2
+    special = model.coefficients_effectively_equal(k1, k2)
 
     # 存在性充要条件：初始时刻亏氧在增长（dD/dt|0 = k1·L0 - k2·D0 > 0）
     if k1 * l0 <= k2 * d0:
@@ -113,16 +117,17 @@ def critical_point_numeric(
     t_c = _bisect_deficit_rate_root(params, tol=tol, max_iter=max_iter)
     if t_c is None:
         return None
+    special = model.coefficients_effectively_equal(params.k1, params.k2)
     d_c = model.deficit(t_c, params)
     point = CriticalPoint(
         t_critical=t_c,
         distance=params.u * t_c,
         deficit=d_c,
         do=params.csat - d_c,
-        special_case=params.k1 == params.k2,
+        special_case=special,
     )
     return CriticalPointResult(
-        exists=True, point=point, reason=REASON_OK, special_case=params.k1 == params.k2
+        exists=True, point=point, reason=REASON_OK, special_case=special
     )
 
 

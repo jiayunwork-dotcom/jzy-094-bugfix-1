@@ -91,7 +91,7 @@ def scan_along_river(
             distance=params.u * t_refined,
             deficit=d_refined,
             do=params.csat - d_refined,
-            special_case=params.k1 == params.k2,
+            special_case=model.coefficients_effectively_equal(params.k1, params.k2),
         )
 
     return ScanResult(
